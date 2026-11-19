@@ -1,0 +1,50 @@
+name: APEBench within-block constraint ablation
+on:
+  push:
+    branches: [mrpcsb-apebench-smoke]
+    paths: ['.github/workflows/apebench-block-relaxation.yml']
+permissions:
+  contents: write
+jobs:
+  block-constraint:
+    if: github.repository == 'HuSophia/ab' && github.ref == 'refs/heads/mrpcsb-apebench-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 26
+    env:
+      JAX_PLATFORMS: cpu
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mrpcsb_smoke/requirements-apebench.txt
+      - name: Install the same pinned APEBench environment
+        run: python -m pip install -r mrpcsb_smoke/requirements-apebench.txt
+      - name: Regenerate the original hierarchy test split
+        run: python mrpcsb_study/forced/generate_hierarchy.py --profile study --out "$RUNNER_TEMP/block-data"
+      - name: Compare proportional and globally balanced lifts with the same block masses
+        run: |
+          if ! python mrpcsb_study/forced/eval_block_relaxation.py --input "$RUNNER_TEMP/block-data/input.npz" --out "$RUNNER_TEMP/block-result" > "$RUNNER_TEMP/block-result.log" 2>&1; then
+            python - "$RUNNER_TEMP/block-result.log" <<'PY'
+          import pathlib, sys
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          locs = [l.strip().split("/")[-1] for l in lines if 'File ' in l and ' in ' in l]
+          exc = next((l.split(":", 1)[0] for l in reversed(lines) if l.split(":", 1)[0].isidentifier() and 'Error' in l.split(":", 1)[0]), "unknown error")
+          print(f"::error title=Block-constraint diagnostic failed::{exc} at {locs[-1] if locs else 'unknown line'}")
+          PY
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/block-result/report.md"
+      - name: Publish only the approved aggregate report
+        run: |
+          test ! -e mrpcsb_study/block-relaxation-report.md
+          cp "$RUNNER_TEMP/block-result/report.md" mrpcsb_study/block-relaxation-report.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- mrpcsb_study/block-relaxation-report.md
+          git commit -m "Publish approved APEBench within-block ablation"
+          git push origin HEAD:refs/heads/mrpcsb-apebench-smoke
