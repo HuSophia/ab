@@ -1,0 +1,50 @@
+name: APEBench fixed-reference hierarchy test
+on:
+  push:
+    branches: [mrpcsb-apebench-smoke]
+    paths: ['.github/workflows/apebench-hierarchy.yml']
+permissions:
+  contents: write
+jobs:
+  hierarchy:
+    if: github.repository == 'HuSophia/ab' && github.ref == 'refs/heads/mrpcsb-apebench-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 26
+    env:
+      JAX_PLATFORMS: cpu
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mrpcsb_smoke/requirements-apebench.txt
+      - name: Install official APEBench and numerical dependencies
+        run: python -m pip install -r mrpcsb_smoke/requirements-apebench.txt
+      - name: Generate fresh groups with the verified simulator and retained driven mode
+        run: python mrpcsb_study/forced/generate_hierarchy.py --profile study --out "$RUNNER_TEMP/hierarchy-data"
+      - name: Compare exact mixtures at matched reference
+        run: |
+          if ! python mrpcsb_study/forced/eval_hierarchy.py --input "$RUNNER_TEMP/hierarchy-data/input.npz" --out "$RUNNER_TEMP/hierarchy-result" > "$RUNNER_TEMP/hierarchy-eval.log" 2>&1; then
+            python - "$RUNNER_TEMP/hierarchy-eval.log" <<'PY'
+          import pathlib, sys
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          locs = [l.strip().split("/")[-1] for l in lines if 'File ' in l and ' in ' in l]
+          exc = next((l.split(":", 1)[0] for l in reversed(lines) if l.split(":", 1)[0].isidentifier() and 'Error' in l.split(":", 1)[0]), "unknown error")
+          print(f"::error title=Hierarchy evaluation failed::{exc} at {locs[-1] if locs else 'unknown line'}")
+          PY
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/hierarchy-result/report.md"
+      - name: Publish only the approved aggregate report
+        run: |
+          test ! -e mrpcsb_study/hierarchy-report.md
+          cp "$RUNNER_TEMP/hierarchy-result/report.md" mrpcsb_study/hierarchy-report.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- mrpcsb_study/hierarchy-report.md
+          git commit -m "Publish approved APEBench hierarchy comparison"
+          git push origin HEAD:refs/heads/mrpcsb-apebench-smoke
