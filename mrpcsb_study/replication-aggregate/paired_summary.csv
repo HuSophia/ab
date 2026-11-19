@@ -1,0 +1,13 @@
+metric,arm,comparator,mean,low,high,n,improved,worsened
+interior_cross_cov_rmse,global_relaxed,old_proportional,0.0030747718528304656,0.0004925618768156794,0.005656981828845251,5,0,5
+interior_forced_band_cross_cov_rmse,global_relaxed,old_proportional,-0.014488955092364636,-0.033927244307543895,0.0049493341228146245,5,4,1
+interior_retained_shell_energy_rel_l1,global_relaxed,old_proportional,-0.0046911974796748305,-0.01276236831835929,0.003379973359009629,5,4,1
+terminal_retained_shell_energy_rel_l1,global_relaxed,old_proportional,0.0,0.0,0.0,5,0,0
+interior_cross_cov_rmse,old_proportional,flat,-0.0033915421425470328,-0.0061001407169682135,-0.000682943568125852,5,5,0
+interior_forced_band_cross_cov_rmse,old_proportional,flat,0.017432330743811713,-0.005669456078023698,0.04053411756564712,5,1,4
+interior_retained_shell_energy_rel_l1,old_proportional,flat,0.0049230688547207135,-0.004090968776022932,0.01393710648546436,5,1,4
+terminal_retained_shell_energy_rel_l1,old_proportional,flat,0.0,0.0,0.0,5,0,0
+interior_cross_cov_rmse,global_relaxed,flat,-0.00031677028971656694,-0.0010412062331972255,0.0004076656537640915,5,3,2
+interior_forced_band_cross_cov_rmse,global_relaxed,flat,0.0029433756514470775,-0.0025832883374977975,0.008470039640391953,5,2,3
+interior_retained_shell_energy_rel_l1,global_relaxed,flat,0.0002318713750458834,-0.002110229749818119,0.002573972499909886,5,2,3
+terminal_retained_shell_energy_rel_l1,global_relaxed,flat,0.0,0.0,0.0,5,0,0
