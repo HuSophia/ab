@@ -1,0 +1,52 @@
+name: APEBench Kolmogorov five-seed study
+on:
+  push:
+    branches: [mrpcsb-apebench-smoke]
+    paths: ['.github/workflows/apebench-study.yml']
+permissions:
+  contents: read
+jobs:
+  cpu-five-seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      JAX_PLATFORMS: cpu
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mrpcsb_smoke/requirements-apebench.txt
+      - name: Install APEBench and pinned dependencies
+        run: |
+          mkdir -p logs
+          python -m pip install -r mrpcsb_smoke/requirements-apebench.txt > logs/install.log 2>&1
+      - name: Generate official APEBench data on the study grid
+        run: python mrpcsb_smoke/prepare.py --profile study --out ape_study > logs/generate.log 2>&1
+      - name: Train and evaluate 20 bridges
+        run: |
+          python mrpcsb_smoke/train_paired.py \
+            --input ape_study/bridge_input.npz --out ape_study/models \
+            --backend numpy --seeds 5 --updates 2000 --steps 200 \
+            --particles 512 --batch 128 --width 64 > logs/train.log 2>&1
+      - name: Verify and summarize paired results
+        run: |
+          python mrpcsb_study/summarize.py ape_study/models
+          cat ape_study/models/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload data, metrics, model weights and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apebench-kolmogorov-five-seed
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            logs/
+            ape_study/metadata.json
+            ape_study/bridge_input.npz
+            ape_study/apebench_reference.png
+            ape_study/models/
