@@ -1,0 +1,79 @@
+name: Recover APEBench study report
+on:
+  push:
+    branches: [mrpcsb-apebench-smoke]
+    paths: ['.github/workflows/apebench-recover-report.yml']
+permissions:
+  actions: read
+  contents: write
+jobs:
+  recover-report:
+    if: github.repository == 'HuSophia/ab' && github.ref == 'refs/heads/mrpcsb-apebench-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Recover only the Markdown report from run 44499102892
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_DIGEST: 37c2dd5ee58dd34126dda5540eaf84e4283206713d96d8e88a7fef9bea0b9537
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, tempfile, urllib.error, urllib.parse, urllib.request, zipfile
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          repo = "HuSophia/ab"
+          base = "https://api.github.com/repos/" + repo
+          headers = {"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                     "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+          auth = urllib.request.build_opener(NoRedirect())
+
+          def api(path):
+              return auth.open(urllib.request.Request(base + path, headers=headers), timeout=45)
+
+          with api("/actions/runs/44499102892/artifacts") as f:
+              matches = [a for a in json.load(f)["artifacts"]
+                         if a["name"] == "apebench-kolmogorov-five-seed" and not a["expired"]]
+          assert len(matches) == 1, "Completed run artifact unavailable"
+          item = matches[0]
+          expected = os.environ["EXPECTED_DIGEST"]
+          assert item["digest"] == "sha256:" + expected, "Artifact listing digest mismatch"
+          try:
+              with api("/actions/artifacts/" + str(int(item["id"])) + "/zip"):
+                  raise RuntimeError("Expected a download redirect")
+          except urllib.error.HTTPError as e:
+              if e.code not in (301, 302, 303, 307, 308):
+                  raise
+              location = e.headers["Location"]
+              e.close()
+          url = urllib.parse.urlsplit(location)
+          assert url.scheme == "https" and url.hostname and not url.username
+          h = hashlib.sha256()
+          with tempfile.TemporaryFile() as archive:
+              with urllib.request.urlopen(location, timeout=90) as f:
+                  for chunk in iter(lambda: f.read(1 << 20), b""):
+                      h.update(chunk)
+                      archive.write(chunk)
+                      assert archive.tell() < 200_000_000, "Unexpected archive size"
+              assert h.hexdigest() == expected, "Downloaded artifact digest mismatch"
+              with zipfile.ZipFile(archive) as z:
+                  entries = [p for p in z.infolist() if p.filename.endswith("/models/report.md")]
+                  assert len(entries) == 1 and 100 < entries[0].file_size < 20_000, "Report missing or invalid"
+                  report = z.read(entries[0]).decode("utf-8")
+          assert report.startswith("# APEBench Kolmogorov: five-seed split-conditional study\n")
+          assert "Paired difference" in report and "Interior SW" in report
+          assert report.count("| interior |") == 5 and report.count("| endpoint |") == 5
+          path = pathlib.Path("mrpcsb_study/results-report.md")
+          assert not path.exists(), "A report already exists; not overwriting"
+          path.write_text(report, encoding="utf-8")
+          PY
+      - name: Publish only the approved report on the experiment branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- mrpcsb_study/results-report.md
+          git commit -m "Publish approved APEBench five-seed score report"
+          git push origin HEAD:refs/heads/mrpcsb-apebench-smoke
