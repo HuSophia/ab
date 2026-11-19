@@ -1,0 +1,75 @@
+name: APEBench fixed-coarse five-split replication
+on:
+  push:
+    branches: [mrpcsb-apebench-smoke]
+    paths: ['.github/workflows/apebench-replication.yml']
+permissions:
+  contents: write
+jobs:
+  frozen-replication:
+    if: github.repository == 'HuSophia/ab' && github.ref == 'refs/heads/mrpcsb-apebench-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      JAX_PLATFORMS: cpu
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mrpcsb_study/replication/requirements-apebench.txt
+      - name: Install pinned benchmark dependencies
+        run: python -m pip install -r mrpcsb_study/replication/requirements-apebench.txt
+      - name: Generate and evaluate five independent held-out splits
+        run: |
+          set -euo pipefail
+          python mrpcsb_study/replication/mrpcsb_replication.py \
+            --profile study --discard-inputs --out "$RUNNER_TEMP/mrpcsb-replication" \
+            > "$RUNNER_TEMP/mrpcsb-replication.log" 2>&1 || {
+              python - "$RUNNER_TEMP/mrpcsb-replication.log" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+          lines = Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          location = next((m for l in reversed(lines) if (m := re.search(r'/([A-Za-z0-9_]+\.py)", line (\d+)', l))), None)
+          error = next((l.split(":", 1)[0] for l in reversed(lines)
+                        if re.fullmatch(r"\w+(?:\.(\w+))*Error:.*", l)), "Experiment error")
+          print(f"::error::Frozen replication failed: {error}" +
+                (f" at {location[1]} line {location[2]}" if location else ""))
+          PY
+              exit 1
+            }
+      - name: Validate and publish approved aggregate outputs only
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/mrpcsb-replication" <<'PY'
+          import csv, json, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          meta = json.loads((root / "manifest.json").read_text())
+          assert meta["profile"] == "study" and meta["versions"]["apebench"] == "0.1.1"
+          assert len(meta["completed_splits"]) == 5
+          assert all(not (p / "data" / "input.npz").exists() for p in root.glob("split_*"))
+          expected = {"objectives_by_split.csv": 5, "scores_by_split.csv": 60,
+                      "paired_summary.csv": 12, "paired_differences_by_split.csv": 60}
+          for file, n in expected.items():
+              with (root / file).open() as f:
+                  assert len(list(csv.DictReader(f))) == n
+          PY
+          test ! -e mrpcsb_study/replication-report.md
+          test ! -e mrpcsb_study/replication-aggregate
+          mkdir mrpcsb_study/replication-aggregate
+          cp "$RUNNER_TEMP/mrpcsb-replication/report.md" mrpcsb_study/replication-report.md
+          for filename in objectives_by_split.csv scores_by_split.csv paired_summary.csv paired_differences_by_split.csv; do
+            cp "$RUNNER_TEMP/mrpcsb-replication/$filename" "mrpcsb_study/replication-aggregate/$filename"
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- mrpcsb_study/replication-report.md mrpcsb_study/replication-aggregate/{objectives_by_split.csv,scores_by_split.csv,paired_summary.csv,paired_differences_by_split.csv}
+          git commit -m "Publish approved five-split APEBench aggregate results"
+          git push origin HEAD:refs/heads/mrpcsb-apebench-smoke
